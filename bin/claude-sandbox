@@ -1,0 +1,156 @@
+#!/bin/bash
+set -euo pipefail
+
+SANDBOX_IMAGE="claude-sandbox-base"
+
+# ── Usage ─────────────────────────────────────────────────────
+usage() {
+  cat <<'EOF'
+Usage: claude-sandbox [options] [path]
+
+Spin up an isolated dev container with Claude Code and Docker CLI installed.
+If the target directory has a docker-compose.yml, its services are started
+and reachable from inside the sandbox by service name.
+
+Arguments:
+  path                Project directory to mount (default: current dir)
+
+Options:
+  -a, --account NAME  Claude account: "personal" or "work" (default: personal)
+  -c, --compose FILE  Compose file to extend (default: auto-detected)
+  -n, --name NAME     Container name (default: sandbox-<dirname>)
+  --memory LIMIT      Memory limit (default: 8g)
+  --cpus LIMIT        CPU limit (default: 4)
+  --build             Force rebuild the base image
+  -h, --help          Show this help
+
+Examples:
+  claude-sandbox                          # current dir, personal account
+  claude-sandbox ~/dev/my-api             # specific project
+  claude-sandbox -a work ~/dev/project    # work Claude account
+  claude-sandbox -c compose.dev.yml .     # custom compose file
+  claude-sandbox --build                  # rebuild base image
+EOF
+  exit 0
+}
+
+# ── Resolve script location (follows symlinks) ───────────────
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+SANDBOX_HOME="$(dirname "$SCRIPT_DIR")"
+
+# ── Parse args ────────────────────────────────────────────────
+ACCOUNT="personal"
+COMPOSE_FILE=""
+CONTAINER_NAME=""
+MEMORY="8g"
+CPUS="4"
+FORCE_BUILD=false
+PROJECT_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--account)  ACCOUNT="$2"; shift 2 ;;
+    -c|--compose)  COMPOSE_FILE="$2"; shift 2 ;;
+    -n|--name)     CONTAINER_NAME="$2"; shift 2 ;;
+    --memory)      MEMORY="$2"; shift 2 ;;
+    --cpus)        CPUS="$2"; shift 2 ;;
+    --build)       FORCE_BUILD=true; shift ;;
+    -h|--help)     usage ;;
+    -*)            echo "Unknown option: $1"; usage ;;
+    *)             PROJECT_DIR="$1"; shift ;;
+  esac
+done
+
+PROJECT_DIR="$(cd "${PROJECT_DIR:-.}" && pwd)"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
+CONTAINER_NAME="${CONTAINER_NAME:-sandbox-${PROJECT_NAME}}"
+
+# ── Resolve Claude config dir ─────────────────────────────────
+case "$ACCOUNT" in
+  work)     CLAUDE_DIR="$HOME/.claude-work" ;;
+  personal) CLAUDE_DIR="$HOME/.claude" ;;
+  *)        echo "Error: Unknown account '$ACCOUNT' (use 'personal' or 'work')"; exit 1 ;;
+esac
+
+if [[ ! -d "$CLAUDE_DIR" ]]; then
+  echo "Error: Claude config not found at $CLAUDE_DIR"
+  exit 1
+fi
+
+# ── Ensure base image exists ──────────────────────────────────
+if $FORCE_BUILD || ! docker image inspect "$SANDBOX_IMAGE" &>/dev/null; then
+  echo "Building base sandbox image..."
+  docker build -t "$SANDBOX_IMAGE" "$SANDBOX_HOME/base"
+fi
+
+# ── Auto-detect project compose file ─────────────────────────
+if [[ -z "$COMPOSE_FILE" ]]; then
+  for candidate in \
+    "$PROJECT_DIR/docker-compose.yml" \
+    "$PROJECT_DIR/docker-compose.yaml" \
+    "$PROJECT_DIR/compose.yml" \
+    "$PROJECT_DIR/compose.yaml"; do
+    if [[ -f "$candidate" ]]; then
+      COMPOSE_FILE="$candidate"
+      break
+    fi
+  done
+fi
+
+# ── Generate sandbox overlay ─────────────────────────────────
+OVERLAY_FILE=$(mktemp /tmp/claude-sandbox-XXXX.yml)
+trap 'rm -f "$OVERLAY_FILE"' EXIT
+
+# If project has a compose file, wire up depends_on
+DEPENDS_ON=""
+if [[ -n "$COMPOSE_FILE" ]]; then
+  SVC_NAMES=$(docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null || true)
+  if [[ -n "$SVC_NAMES" ]]; then
+    DEPENDS_ON="    depends_on:"$'\n'
+    while IFS= read -r svc; do
+      DEPENDS_ON+="      ${svc}:"$'\n'
+      DEPENDS_ON+="        condition: service_started"$'\n'
+    done <<< "$SVC_NAMES"
+  fi
+fi
+
+cat > "$OVERLAY_FILE" <<YAML
+services:
+  sandbox:
+    image: ${SANDBOX_IMAGE}
+    container_name: ${CONTAINER_NAME}
+    hostname: sandbox
+    stdin_open: true
+    tty: true
+    working_dir: /home/dev/project
+    volumes:
+      - ${PROJECT_DIR}:/home/dev/project
+      - ${CLAUDE_DIR}:/home/dev/.claude:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: ${MEMORY}
+    cpus: ${CPUS}
+${DEPENDS_ON}
+YAML
+
+# ── Build compose command ─────────────────────────────────────
+COMPOSE_CMD=(docker compose -p "$CONTAINER_NAME")
+
+if [[ -n "$COMPOSE_FILE" ]]; then
+  COMPOSE_CMD+=(-f "$COMPOSE_FILE")
+fi
+COMPOSE_CMD+=(-f "$OVERLAY_FILE")
+
+# ── Launch ────────────────────────────────────────────────────
+echo "Project:   $PROJECT_DIR"
+echo "Account:   $ACCOUNT"
+if [[ -n "$COMPOSE_FILE" ]]; then
+  echo "Compose:   $COMPOSE_FILE"
+  echo "Services:  $(echo "$SVC_NAMES" | tr '\n' ' ')"
+fi
+echo "Container: $CONTAINER_NAME"
+echo "---"
+
+"${COMPOSE_CMD[@]}" run --rm --service-ports sandbox
+
+# Cleanup services on exit
+"${COMPOSE_CMD[@]}" down 2>/dev/null
