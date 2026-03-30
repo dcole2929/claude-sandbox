@@ -1,5 +1,6 @@
 FROM node:20-bookworm
 
+# System essentials (run as root)
 RUN apt-get update && apt-get install -y \
     git curl wget jq ripgrep fd-find build-essential \
     sudo tmux zsh python3 python3-pip \
@@ -17,14 +18,14 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # Language tooling
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Claude Code
-RUN npm install -g @anthropic-ai/claude-code
-
 # Dev user with sudo + docker socket access
 RUN useradd -m -s /bin/bash dev && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     groupadd -f docker && usermod -aG docker dev
-USER dev
-WORKDIR /home/dev/project
 
+# Claude Code (native install as dev user so it lands in ~dev/)
+USER dev
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+WORKDIR /home/dev/project
 ENTRYPOINT ["/bin/bash"]
