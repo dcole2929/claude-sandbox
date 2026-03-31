@@ -123,6 +123,8 @@ services:
     stdin_open: true
     tty: true
     working_dir: /home/dev/project
+    environment:
+      - CLAUDE_CONFIG_DIR=/home/dev/.claude
     volumes:
       - ${PROJECT_DIR}:/home/dev/project
       - ${CLAUDE_DIR}:/home/dev/.claude

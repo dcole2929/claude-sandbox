@@ -19,13 +19,15 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Dev user with sudo + docker socket access
-RUN useradd -m -s /bin/bash dev && \
+RUN usermod -u 1001 node && \
+    useradd -m -s /bin/bash -u 1000 dev && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     groupadd -f docker && usermod -aG docker dev
 
 # Claude Code (native install as dev user so it lands in ~dev/)
 USER dev
 RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/dev/.local/bin:${PATH}"
 
 WORKDIR /home/dev/project
 ENTRYPOINT ["/bin/bash"]
