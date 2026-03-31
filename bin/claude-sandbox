@@ -18,6 +18,7 @@ Arguments:
 Options:
   -a, --account NAME  Claude account: "personal" or "work" (default: personal)
   -c, --compose FILE  Compose file to extend (default: auto-detected)
+  --no-compose        Skip project compose file (sandbox only, no services)
   -n, --name NAME     Container name (default: sandbox-<dirname>)
   --memory LIMIT      Memory limit (default: 8g)
   --cpus LIMIT        CPU limit (default: 4)
@@ -29,6 +30,7 @@ Examples:
   claude-sandbox ~/dev/my-api             # specific project
   claude-sandbox -a work ~/dev/project    # work Claude account
   claude-sandbox -c compose.dev.yml .     # custom compose file
+  claude-sandbox --no-compose ~/dev/app   # skip broken compose file
   claude-sandbox --build                  # rebuild base image
 EOF
   exit 0
@@ -41,6 +43,7 @@ SANDBOX_HOME="$(dirname "$SCRIPT_DIR")"
 # ── Parse args ────────────────────────────────────────────────
 ACCOUNT="personal"
 COMPOSE_FILE=""
+NO_COMPOSE=false
 CONTAINER_NAME=""
 MEMORY="8g"
 CPUS="4"
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -a|--account)  ACCOUNT="$2"; shift 2 ;;
     -c|--compose)  COMPOSE_FILE="$2"; shift 2 ;;
+    --no-compose)  NO_COMPOSE=true; shift ;;
     -n|--name)     CONTAINER_NAME="$2"; shift 2 ;;
     --memory)      MEMORY="$2"; shift 2 ;;
     --cpus)        CPUS="$2"; shift 2 ;;
@@ -84,7 +88,7 @@ if $FORCE_BUILD || ! docker image inspect "$SANDBOX_IMAGE" &>/dev/null; then
 fi
 
 # ── Auto-detect project compose file ─────────────────────────
-if [[ -z "$COMPOSE_FILE" ]]; then
+if ! $NO_COMPOSE && [[ -z "$COMPOSE_FILE" ]]; then
   for candidate in \
     "$PROJECT_DIR/docker-compose.yml" \
     "$PROJECT_DIR/docker-compose.yaml" \
@@ -95,6 +99,10 @@ if [[ -z "$COMPOSE_FILE" ]]; then
       break
     fi
   done
+fi
+
+if $NO_COMPOSE; then
+  COMPOSE_FILE=""
 fi
 
 # ── Generate sandbox overlay ─────────────────────────────────
