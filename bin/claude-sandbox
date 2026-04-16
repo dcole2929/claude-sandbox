@@ -81,6 +81,14 @@ if [[ ! -d "$CLAUDE_DIR" ]]; then
   exit 1
 fi
 
+# ── Resolve git/GitHub config paths ───────────────────────────
+GH_CONFIG_DIR="${GH_CONFIG_DIR:-$HOME/.config/gh}"
+
+GITCONFIG_VOLUME=""
+GH_VOLUME=""
+[[ -f "$HOME/.gitconfig" ]] && GITCONFIG_VOLUME="      - ${HOME}/.gitconfig:/home/dev/.gitconfig.host:ro"$'\n'
+[[ -d "$GH_CONFIG_DIR" ]]   && GH_VOLUME="      - ${GH_CONFIG_DIR}:/home/dev/.config/gh"$'\n'
+
 # ── Ensure base image exists ──────────────────────────────────
 if $FORCE_BUILD || ! docker image inspect "$SANDBOX_IMAGE" &>/dev/null; then
   echo "Building base sandbox image..."
@@ -138,6 +146,7 @@ services:
       - ${PROJECT_DIR}:/home/dev/project
       - ${CLAUDE_DIR}:/home/dev/.claude
       - /var/run/docker.sock:/var/run/docker.sock
+${GITCONFIG_VOLUME}${GH_VOLUME}
     mem_limit: ${MEMORY}
     cpus: ${CPUS}
 ${DEPENDS_ON}
