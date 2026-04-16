@@ -49,10 +49,15 @@ claude-sandbox --build
 | `path` | Project directory to mount | Current directory |
 | `-a, --account NAME` | Claude account: `personal` or `work` | `personal` |
 | `-c, --compose FILE` | Compose file to extend | Auto-detected |
+| `--no-compose` | Skip project compose file | |
 | `-n, --name NAME` | Container name | `sandbox-<dirname>` |
 | `--memory LIMIT` | Memory limit | `8g` |
 | `--cpus LIMIT` | CPU limit | `4` |
 | `--build` | Force rebuild the base image | |
+
+## Networking
+
+The sandbox runs with `network_mode: host` — it shares the host's network stack directly. Any port a service binds inside the container is immediately accessible on the host without explicit port mapping.
 
 ## How it works
 

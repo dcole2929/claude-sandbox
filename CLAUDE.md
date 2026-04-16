@@ -18,6 +18,10 @@ claude-sandbox [options] [path]
 
 The CLI supports `-a work` / `-a personal` to switch Claude accounts (maps to `~/.claude-work` or `~/.claude`), `--build` to force-rebuild the base image, and `-c` to specify a custom compose file.
 
+## Networking
+
+The sandbox runs with `network_mode: host`, sharing the host's network stack. Any port bound inside the container is directly accessible on the host — no port mapping needed.
+
 ## Development notes
 
 - The base image uses the native Claude installer (`curl -fsSL https://claude.ai/install.sh | bash`) run as the `dev` user.

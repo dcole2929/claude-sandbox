@@ -128,6 +128,7 @@ services:
     image: ${SANDBOX_IMAGE}
     container_name: ${CONTAINER_NAME}
     hostname: sandbox
+    network_mode: host
     stdin_open: true
     tty: true
     working_dir: /home/dev/project
@@ -157,10 +158,11 @@ if [[ -n "$COMPOSE_FILE" ]]; then
   echo "Compose:   $COMPOSE_FILE"
   echo "Services:  $(echo "$SVC_NAMES" | tr '\n' ' ')"
 fi
+echo "Network:   host"
 echo "Container: $CONTAINER_NAME"
 echo "---"
 
-"${COMPOSE_CMD[@]}" run --rm --service-ports sandbox
+"${COMPOSE_CMD[@]}" run --rm sandbox
 
 # Cleanup services on exit
 "${COMPOSE_CMD[@]}" down 2>/dev/null
