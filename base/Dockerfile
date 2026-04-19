@@ -39,5 +39,5 @@ ENV PATH="/home/dev/.local/bin:${PATH}"
 COPY --chown=dev:dev entrypoint.sh /home/dev/entrypoint.sh
 RUN chmod +x /home/dev/entrypoint.sh
 
-WORKDIR /home/dev/project
+WORKDIR /home/dev
 ENTRYPOINT ["/home/dev/entrypoint.sh"]

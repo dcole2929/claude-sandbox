@@ -139,11 +139,11 @@ services:
     network_mode: host
     stdin_open: true
     tty: true
-    working_dir: /home/dev/project
+    working_dir: /home/dev/${PROJECT_NAME}
     environment:
       - CLAUDE_CONFIG_DIR=/home/dev/.claude
     volumes:
-      - ${PROJECT_DIR}:/home/dev/project
+      - ${PROJECT_DIR}:/home/dev/${PROJECT_NAME}
       - ${CLAUDE_DIR}:/home/dev/.claude
       - /var/run/docker.sock:/var/run/docker.sock
 ${GITCONFIG_VOLUME}${GH_VOLUME}
