@@ -16,14 +16,18 @@ Arguments:
   path                Project directory to mount (default: current dir)
 
 Options:
-  -a, --account NAME  Claude account: "personal" or "work" (default: personal)
-  -c, --compose FILE  Compose file to extend (default: auto-detected)
-  --no-compose        Skip project compose file (sandbox only, no services)
-  -n, --name NAME     Container name (default: sandbox-<dirname>)
-  --memory LIMIT      Memory limit (default: 8g)
-  --cpus LIMIT        CPU limit (default: 4)
-  --build             Force rebuild the base image
-  -h, --help          Show this help
+  -a, --account NAME    Claude account: "personal" or "work" (default: personal)
+  --claude-config PATH  Path to host .claude.json (default: ~/.claude.json)
+  -c, --compose FILE    Compose file to extend (default: auto-detected)
+  --no-compose          Skip project compose file (sandbox only, no services)
+  -n, --name NAME       Container name (default: sandbox-<dirname>)
+  --memory LIMIT        Memory limit (default: 8g)
+  --cpus LIMIT          CPU limit (default: 4)
+  --build               Force rebuild the base image
+  -h, --help            Show this help
+
+Persistent defaults can be stored as JSON at ~/.claude-sandbox/config.json.
+Recognized keys: claudeConfig, account, memory, cpus. CLI flags override.
 
 Examples:
   claude-sandbox                          # current dir, personal account
@@ -40,7 +44,7 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 SANDBOX_HOME="$(dirname "$SCRIPT_DIR")"
 
-# ── Parse args ────────────────────────────────────────────────
+# ── Built-in defaults (overridden by config file, then CLI flags) ──
 ACCOUNT="personal"
 COMPOSE_FILE=""
 NO_COMPOSE=false
@@ -49,19 +53,48 @@ MEMORY="8g"
 CPUS="4"
 FORCE_BUILD=false
 PROJECT_DIR=""
+CLAUDE_CONFIG_PATH=""
 
+# ── Load persistent sandbox config (~/.claude-sandbox/config.json) ──
+SANDBOX_CONFIG="$HOME/.claude-sandbox/config.json"
+if [[ -f "$SANDBOX_CONFIG" ]]; then
+  if command -v python3 &>/dev/null; then
+    read_sandbox_cfg() {
+      python3 - "$SANDBOX_CONFIG" "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    v = d.get(sys.argv[2], "")
+    if v:
+        print(v, end="")
+except Exception:
+    pass
+PY
+    }
+    v="$(read_sandbox_cfg claudeConfig)"; [[ -n "$v" ]] && CLAUDE_CONFIG_PATH="$v"
+    v="$(read_sandbox_cfg account)";      [[ -n "$v" ]] && ACCOUNT="$v"
+    v="$(read_sandbox_cfg memory)";       [[ -n "$v" ]] && MEMORY="$v"
+    v="$(read_sandbox_cfg cpus)";         [[ -n "$v" ]] && CPUS="$v"
+  else
+    echo "Warning: $SANDBOX_CONFIG exists but python3 is unavailable — skipping"
+  fi
+fi
+
+# ── Parse CLI args (override config file + defaults) ─────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -a|--account)  ACCOUNT="$2"; shift 2 ;;
-    -c|--compose)  COMPOSE_FILE="$2"; shift 2 ;;
-    --no-compose)  NO_COMPOSE=true; shift ;;
-    -n|--name)     CONTAINER_NAME="$2"; shift 2 ;;
-    --memory)      MEMORY="$2"; shift 2 ;;
-    --cpus)        CPUS="$2"; shift 2 ;;
-    --build)       FORCE_BUILD=true; shift ;;
-    -h|--help)     usage ;;
-    -*)            echo "Unknown option: $1"; usage ;;
-    *)             PROJECT_DIR="$1"; shift ;;
+    -a|--account)     ACCOUNT="$2"; shift 2 ;;
+    --claude-config)  CLAUDE_CONFIG_PATH="$2"; shift 2 ;;
+    -c|--compose)     COMPOSE_FILE="$2"; shift 2 ;;
+    --no-compose)     NO_COMPOSE=true; shift ;;
+    -n|--name)        CONTAINER_NAME="$2"; shift 2 ;;
+    --memory)         MEMORY="$2"; shift 2 ;;
+    --cpus)           CPUS="$2"; shift 2 ;;
+    --build)          FORCE_BUILD=true; shift ;;
+    -h|--help)        usage ;;
+    -*)               echo "Unknown option: $1"; usage ;;
+    *)                PROJECT_DIR="$1"; shift ;;
   esac
 done
 
@@ -69,7 +102,7 @@ PROJECT_DIR="$(cd "${PROJECT_DIR:-.}" && pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 CONTAINER_NAME="${CONTAINER_NAME:-sandbox-${PROJECT_NAME}}"
 
-# ── Resolve Claude config dir ─────────────────────────────────
+# ── Resolve Claude config paths ───────────────────────────────
 case "$ACCOUNT" in
   work)     CLAUDE_DIR="$HOME/.claude-work" ;;
   personal) CLAUDE_DIR="$HOME/.claude" ;;
@@ -77,8 +110,36 @@ case "$ACCOUNT" in
 esac
 
 if [[ ! -d "$CLAUDE_DIR" ]]; then
-  echo "Error: Claude config not found at $CLAUDE_DIR"
+  echo "Error: Claude data dir not found at $CLAUDE_DIR"
   exit 1
+fi
+
+# Default .claude.json path (sibling of the account's data dir)
+if [[ -z "$CLAUDE_CONFIG_PATH" ]]; then
+  case "$ACCOUNT" in
+    work)     CLAUDE_CONFIG_PATH="$HOME/.claude-work.json" ;;
+    personal) CLAUDE_CONFIG_PATH="$HOME/.claude.json" ;;
+  esac
+fi
+
+CLAUDE_JSON_VOLUME=""
+if [[ -f "$CLAUDE_CONFIG_PATH" ]]; then
+  CLAUDE_JSON_VOLUME="      - ${CLAUDE_CONFIG_PATH}:/home/dev/.claude/.claude.json"$'\n'
+else
+  echo "Warning: Claude config file not found at $CLAUDE_CONFIG_PATH — container will start without saved identity"
+fi
+
+# ── Extract OAuth credentials from macOS Keychain ─────────────
+CREDS_TEMP=""
+CREDS_VOLUME=""
+if command -v security &>/dev/null; then
+  CREDS_JSON="$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null || true)"
+  if [[ -n "$CREDS_JSON" ]]; then
+    CREDS_TEMP=$(mktemp /tmp/claude-sandbox-creds-XXXX.json)
+    chmod 600 "$CREDS_TEMP"
+    printf '%s' "$CREDS_JSON" > "$CREDS_TEMP"
+    CREDS_VOLUME="      - ${CREDS_TEMP}:/home/dev/.claude/.credentials.json"$'\n'
+  fi
 fi
 
 # ── Resolve git/GitHub config paths ───────────────────────────
@@ -115,7 +176,11 @@ fi
 
 # ── Generate sandbox overlay ─────────────────────────────────
 OVERLAY_FILE=$(mktemp /tmp/claude-sandbox-XXXX.yml)
-trap 'rm -f "$OVERLAY_FILE"' EXIT
+cleanup() {
+  rm -f "$OVERLAY_FILE"
+  [[ -n "$CREDS_TEMP" ]] && rm -f "$CREDS_TEMP"
+}
+trap cleanup EXIT
 
 # If project has a compose file, wire up depends_on
 DEPENDS_ON=""
@@ -136,6 +201,8 @@ services:
     image: ${SANDBOX_IMAGE}
     container_name: ${CONTAINER_NAME}
     hostname: sandbox
+    extra_hosts:
+      - "sandbox:127.0.0.1"
     network_mode: host
     stdin_open: true
     tty: true
@@ -146,7 +213,7 @@ services:
       - ${PROJECT_DIR}:/home/dev/${PROJECT_NAME}
       - ${CLAUDE_DIR}:/home/dev/.claude
       - /var/run/docker.sock:/var/run/docker.sock
-${GITCONFIG_VOLUME}${GH_VOLUME}
+${CLAUDE_JSON_VOLUME}${CREDS_VOLUME}${GITCONFIG_VOLUME}${GH_VOLUME}
     mem_limit: ${MEMORY}
     cpus: ${CPUS}
 ${DEPENDS_ON}
@@ -163,6 +230,8 @@ COMPOSE_CMD+=(-f "$OVERLAY_FILE")
 # ── Launch ────────────────────────────────────────────────────
 echo "Project:   $PROJECT_DIR"
 echo "Account:   $ACCOUNT"
+echo "Config:    ${CLAUDE_CONFIG_PATH:-<none>}$([[ -z "$CLAUDE_JSON_VOLUME" ]] && echo ' (missing)')"
+echo "Creds:     $([[ -n "$CREDS_TEMP" ]] && echo 'Keychain' || echo '<none — login required>')"
 if [[ -n "$COMPOSE_FILE" ]]; then
   echo "Compose:   $COMPOSE_FILE"
   echo "Services:  $(echo "$SVC_NAMES" | tr '\n' ' ')"
