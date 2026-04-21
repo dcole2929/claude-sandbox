@@ -153,19 +153,36 @@ if [[ ! -d "$CLAUDE_DIR" ]]; then
   exit 1
 fi
 
-# Default .claude.json path (sibling of the account's data dir)
-if [[ -z "$CLAUDE_CONFIG_PATH" ]]; then
+# Resolve main Claude config file path.
+# Priority:
+#   1. Explicit --claude-config (CLI or config.json): mount that file over the default.
+#   2. Inside the data dir ($CLAUDE_DIR/.claude.json): preferred on modern Linux/WSL —
+#      already available via the $CLAUDE_DIR bind mount, no extra mount needed.
+#   3. Legacy sibling ($HOME/.claude.json or $HOME/.claude-work.json): macOS layout.
+#      Mount it over the nested path so Claude sees it as its config.
+CLAUDE_JSON_VOLUME=""
+
+if [[ -n "$CLAUDE_CONFIG_PATH" ]]; then
+  # User explicitly specified a path
+  if [[ -f "$CLAUDE_CONFIG_PATH" ]]; then
+    CLAUDE_JSON_VOLUME="      - ${CLAUDE_CONFIG_PATH}:/home/dev/.claude/.claude.json"$'\n'
+  else
+    echo "Warning: Claude config file not found at $CLAUDE_CONFIG_PATH — container will start without saved identity"
+  fi
+elif [[ -f "$CLAUDE_DIR/.claude.json" ]]; then
+  # Canonical location inside the data dir; already mounted via $CLAUDE_DIR
+  CLAUDE_CONFIG_PATH="$CLAUDE_DIR/.claude.json"
+else
+  # Legacy sibling path (macOS)
   case "$ACCOUNT" in
     work)     CLAUDE_CONFIG_PATH="$HOME/.claude-work.json" ;;
     personal) CLAUDE_CONFIG_PATH="$HOME/.claude.json" ;;
   esac
-fi
-
-CLAUDE_JSON_VOLUME=""
-if [[ -f "$CLAUDE_CONFIG_PATH" ]]; then
-  CLAUDE_JSON_VOLUME="      - ${CLAUDE_CONFIG_PATH}:/home/dev/.claude/.claude.json"$'\n'
-else
-  echo "Warning: Claude config file not found at $CLAUDE_CONFIG_PATH — container will start without saved identity"
+  if [[ -f "$CLAUDE_CONFIG_PATH" ]]; then
+    CLAUDE_JSON_VOLUME="      - ${CLAUDE_CONFIG_PATH}:/home/dev/.claude/.claude.json"$'\n'
+  else
+    echo "Warning: Claude config file not found at $CLAUDE_CONFIG_PATH — container will start without saved identity"
+  fi
 fi
 
 # ── Extract OAuth credentials from macOS Keychain ─────────────
