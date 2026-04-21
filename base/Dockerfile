@@ -35,6 +35,9 @@ USER dev
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/home/dev/.local/bin:${PATH}"
 
+# Source host-mounted sandbox rc (aliases, shell tweaks) if present
+RUN printf '\n# Sandbox rc (mounted from host ~/.claude-sandbox/bashrc + <project>/.claude-sandbox/bashrc)\n[ -r "$HOME/.sandbox-rc" ] && . "$HOME/.sandbox-rc"\n' >> /home/dev/.bashrc
+
 # Entrypoint
 COPY --chown=dev:dev entrypoint.sh /home/dev/entrypoint.sh
 RUN chmod +x /home/dev/entrypoint.sh

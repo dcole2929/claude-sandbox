@@ -5,7 +5,8 @@ Run [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in an isolated
 ## What it does
 
 - Spins up a Docker container with Claude Code, Docker CLI, and common dev tools pre-installed
-- Mounts your project directory, Claude data dir (`~/.claude`), and main config (`~/.claude.json`) into the container
+- Mounts your project directory at the same absolute path inside the container (so bind-mount paths passed to the host Docker daemon by sibling-container tools like `supabase` resolve identically in both namespaces)
+- Mounts your Claude data dir (`~/.claude`) and main config (`~/.claude.json`) into the container
 - On macOS, extracts the OAuth credential from Keychain at startup so Claude inside the container is authenticated without re-login
 - Aligns the container's group with the Docker socket's GID at runtime, so `docker`, `supabase`, and other daemon clients work as the non-root `dev` user
 - Auto-detects `docker-compose.yml` in your project and wires up services so they're reachable by hostname
@@ -59,9 +60,16 @@ claude-sandbox --build
 | `--cpus LIMIT` | CPU limit | `4` |
 | `--build` | Force rebuild the base image | |
 
-## Persistent defaults
+## Persistent defaults and dotfiles
 
-To avoid repeating flags every run, create `~/.claude-sandbox/config.json`:
+The sandbox reads settings from two directories that mirror each other:
+
+- `~/.claude-sandbox/` — user-global (auto-created on first run with built-in defaults)
+- `<project>/.claude-sandbox/` — project-local (opt-in; commit to share with collaborators)
+
+Precedence: built-in defaults → user → project → CLI flags. Project values override user values per key; missing keys fall through.
+
+### `config.json` — persistent flag defaults
 
 ```json
 {
@@ -72,7 +80,27 @@ To avoid repeating flags every run, create `~/.claude-sandbox/config.json`:
 }
 ```
 
-Precedence: built-in defaults → `~/.claude-sandbox/config.json` → CLI flags.
+Recognized keys: `claudeConfig`, `account`, `memory`, `cpus`.
+
+### `bashrc` — shell aliases and tweaks
+
+Sourced from the sandbox shell's `.bashrc`. User and project files are concatenated (user first, then project), so project definitions naturally override user ones.
+
+```bash
+alias pn='pnpm'
+alias cy='claude --dangerously-skip-permissions'
+```
+
+### `tmux.conf` — tmux config
+
+Mounted as `~/.tmux.conf` inside the sandbox. Same user→project concatenation as `bashrc`.
+
+```tmux
+set -g mouse on
+set -g history-limit 50000
+```
+
+Edit any of these files on the host — changes take effect the next time you start the sandbox. Only Dockerfile changes require `--build`.
 
 ## Networking
 
